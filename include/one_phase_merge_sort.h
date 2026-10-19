@@ -1,41 +1,59 @@
 #pragma once
-#include "external_sort_utils.h"
+#include "merge_utils.h"
+#include <filesystem>
+#include <stdexcept>
+#include <string>
 #include <cstddef>
-#include <vector>
+#include <utility>
 
-namespace sorting {
-
-// One-phase simple merge: merged runs are distributed directly to the next pair of files.
-template <class T>
-void one_phase_merge_sort(std::vector<T>& values) {
-    if (values.size() < 2) {
-        return;
-    }
-
-    detail::TemporaryFiles temporary_files;
-    const auto input_file = temporary_files.make_path("one_phase_input");
-    auto first_file = temporary_files.make_path("one_phase_first");
-    auto second_file = temporary_files.make_path("one_phase_second");
-    auto output_first_file = temporary_files.make_path("one_phase_output_first");
-    auto output_second_file = temporary_files.make_path("one_phase_output_second");
-    detail::write_values(input_file, values);
-    detail::distribute_fixed_runs<T>(input_file, first_file, second_file, 1);
-
-    for (std::size_t run_length = 1; run_length < values.size();) {
-        detail::merge_and_distribute_fixed_runs<T>(
-            first_file, second_file, output_first_file, output_second_file, run_length);
-        first_file.swap(output_first_file);
-        second_file.swap(output_second_file);
-        if (run_length > values.size() / 2) {
-            break; // Avoid overflow in run_length *= 2.
+namespace {
+    template <typename T>
+    void mergePass(const std::string& src1, const std::string& src2,
+        const std::string& dst1, const std::string& dst2, std::size_t len) {
+        merge_utils::Reader<T> a(src1), b(src2);
+        merge_utils::Writer<T> o1(dst1), o2(dst2);
+        bool toFirst = true;
+        while (a.valid() || b.valid()) {
+            merge_utils::mergeFixed(a, b, toFirst ? o1 : o2, len);
+            toFirst = !toFirst;
         }
-        run_length *= 2;
     }
-
-    values = detail::read_values<T>(first_file);
 }
 
-extern template void one_phase_merge_sort<int>(std::vector<int>&);
-extern template void one_phase_merge_sort<double>(std::vector<double>&);
+template <typename T>
+void onePhaseMergeSort(const std::string& inputFile, const std::string& tempDir, std::size_t runSize, bool keepTemp) {
+    namespace fs = std::filesystem;
+    if (!fs::exists(inputFile))
+        throw std::runtime_error("Input file not found: " + inputFile);
+    if (runSize == 0) runSize = 1;
+    fs::create_directories(tempDir);
 
-} // namespace sorting
+    const std::string names[4] = {
+        merge_utils::tempPath(tempDir, "one_phase_1.txt"),
+        merge_utils::tempPath(tempDir, "one_phase_2.txt"),
+        merge_utils::tempPath(tempDir, "one_phase_3.txt"),
+        merge_utils::tempPath(tempDir, "one_phase_4.txt") };
+
+    std::string src1 = names[0], src2 = names[1];
+    std::string dst1 = names[2], dst2 = names[3];
+
+    std::size_t runs = merge_utils::distributeSorted<T>(inputFile, src1, src2, runSize);
+
+    if (runs > 0) {
+        std::size_t len = runSize;
+        while (runs > 1) {
+            mergePass<T>(src1, src2, dst1, dst2, len);
+            runs = (runs + 1) / 2;
+            len *= 2;
+            std::swap(src1, dst1);
+            std::swap(src2, dst2);
+        }
+        merge_utils::replaceFile(src1, inputFile);
+    }
+
+    if (!keepTemp)
+        for (const std::string& n : names) merge_utils::removeIfExists(n);
+}
+
+extern template void onePhaseMergeSort<int>(const std::string&, const std::string&, std::size_t, bool);
+extern template void onePhaseMergeSort<double>(const std::string&, const std::string&, std::size_t, bool);

@@ -1,5 +1,4 @@
 #include "two_phase_merge_sort.h"
-#include <vector>
 
-template void sorting::two_phase_merge_sort<int>(std::vector<int>&);
-template void sorting::two_phase_merge_sort<double>(std::vector<double>&);
+template void twoPhaseMergeSort<int>(const std::string&, const std::string&, std::size_t, bool);
+template void twoPhaseMergeSort<double>(const std::string&, const std::string&, std::size_t, bool);

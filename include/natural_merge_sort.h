@@ -1,34 +1,40 @@
 #pragma once
-#include "external_sort_utils.h"
-#include <vector>
+#include "merge_utils.h"
+#include <filesystem>
+#include <stdexcept>
+#include <string>
 
-namespace sorting {
-
-// Natural merge: identify maximal non-decreasing runs before every merge pass.
-template <class T>
-void natural_merge_sort(std::vector<T>& values) {
-    if (values.size() < 2) {
-        return;
-    }
-
-    detail::TemporaryFiles temporary_files;
-    const auto main_file = temporary_files.make_path("natural_main");
-    const auto first_file = temporary_files.make_path("natural_first");
-    const auto second_file = temporary_files.make_path("natural_second");
-    detail::write_values(main_file, values);
-
-    while (true) {
-        const std::size_t run_count =
-            detail::distribute_natural_runs<T>(main_file, first_file, second_file);
-        if (run_count <= 1) {
-            values = detail::read_values<T>(first_file);
-            return;
-        }
-        detail::merge_natural_runs<T>(first_file, second_file, main_file);
+namespace {
+    template <typename T>
+    void mergePhase(const std::string& b, const std::string& c, const std::string& dst) {
+        merge_utils::Reader<T> rb(b), rc(c);
+        merge_utils::Writer<T> out(dst);
+        while (rb.valid() || rc.valid())
+            merge_utils::mergeNatural(rb, rc, out);
     }
 }
 
-extern template void natural_merge_sort<int>(std::vector<int>&);
-extern template void natural_merge_sort<double>(std::vector<double>&);
+template <typename T>
+void naturalMergeSort(const std::string& inputFile, const std::string& tempDir, bool keepTemp) {
+    namespace fs = std::filesystem;
+    if (!fs::exists(inputFile))
+        throw std::runtime_error("Input file not found: " + inputFile);
+    fs::create_directories(tempDir);
 
-} // namespace sorting
+    const std::string fileB = merge_utils::tempPath(tempDir, "natural_b.txt");
+    const std::string fileC = merge_utils::tempPath(tempDir, "natural_c.txt");
+
+    while (true) {
+        const std::size_t runs = merge_utils::distributeNatural<T>(inputFile, fileB, fileC);
+        if (runs <= 1) break;
+        mergePhase<T>(fileB, fileC, inputFile);
+    }
+
+    if (!keepTemp) {
+        merge_utils::removeIfExists(fileB);
+        merge_utils::removeIfExists(fileC);
+    }
+}
+
+extern template void naturalMergeSort<int>(const std::string&, const std::string&, bool);
+extern template void naturalMergeSort<double>(const std::string&, const std::string&, bool);

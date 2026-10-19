@@ -1,35 +1,49 @@
 #pragma once
-#include "external_sort_utils.h"
+#include "merge_utils.h"
+#include <filesystem>
+#include <stdexcept>
+#include <string>
 #include <cstddef>
-#include <vector>
 
-namespace sorting {
-
-// Two-phase simple merge: distribute fixed-length runs, then merge them back.
-template <class T>
-void two_phase_merge_sort(std::vector<T>& values) {
-    if (values.size() < 2) {
-        return;
+namespace {
+    template <typename T>
+    void mergePhase(const std::string& b, const std::string& c, const std::string& dst, std::size_t len) {
+        merge_utils::Reader<T> rb(b), rc(c);
+        merge_utils::Writer<T> out(dst);
+        while (rb.valid() || rc.valid())
+            merge_utils::mergeFixed(rb, rc, out, len);
     }
-
-    detail::TemporaryFiles temporary_files;
-    const auto main_file = temporary_files.make_path("two_phase_main");
-    const auto first_file = temporary_files.make_path("two_phase_first");
-    const auto second_file = temporary_files.make_path("two_phase_second");
-    detail::write_values(main_file, values);
-
-    for (std::size_t run_length = 1; run_length < values.size();) {
-        detail::distribute_fixed_runs<T>(main_file, first_file, second_file, run_length);
-        detail::merge_fixed_runs<T>(first_file, second_file, main_file, run_length);
-        if (run_length > values.size() / 2) {
-            break; // Avoid overflow in run_length *= 2.
-        }
-        run_length *= 2;
-    }
-    values = detail::read_values<T>(main_file);
 }
 
-extern template void two_phase_merge_sort<int>(std::vector<int>&);
-extern template void two_phase_merge_sort<double>(std::vector<double>&);
+template <typename T>
+void twoPhaseMergeSort(const std::string& inputFile, const std::string& tempDir, std::size_t runSize, bool keepTemp) {
+    namespace fs = std::filesystem;
+    if (!fs::exists(inputFile))
+        throw std::runtime_error("Input file not found: " + inputFile);
+    if (runSize == 0) runSize = 1;
+    fs::create_directories(tempDir);
 
-} // namespace sorting
+    const std::string fileB = merge_utils::tempPath(tempDir, "two_phase_b.txt");
+    const std::string fileC = merge_utils::tempPath(tempDir, "two_phase_c.txt");
+
+    std::size_t runs = merge_utils::distributeSorted<T>(inputFile, fileB, fileC, runSize);
+
+    if (runs > 0) {
+        std::size_t len = runSize;
+        while (true) {
+            mergePhase<T>(fileB, fileC, inputFile, len);
+            runs = (runs + 1) / 2;
+            if (runs == 1) break;
+            len *= 2;
+            merge_utils::distributeFixed<T>(inputFile, fileB, fileC, len);
+        }
+    }
+
+    if (!keepTemp) {
+        merge_utils::removeIfExists(fileB);
+        merge_utils::removeIfExists(fileC);
+    }
+}
+
+extern template void twoPhaseMergeSort<int>(const std::string&, const std::string&, std::size_t, bool);
+extern template void twoPhaseMergeSort<double>(const std::string&, const std::string&, std::size_t, bool);
